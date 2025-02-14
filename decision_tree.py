@@ -4,23 +4,23 @@ import pandas as pd
 
 class Node():
 
-    def __init__(self, feature_index=None, threshold=None, left=None, right=None, info_gain=None, value=None):
+    def __init__(self, feature_index=None, threshold=None, left=None, right=None, efficiency_metric=None, value=None):
 
         #these parameters are important if the node is decision node 
         self.feature_index = feature_index #each node compares splits for one set of features
         self.threshold = threshold #threshold defines splits and is adjusted to obtain best split - this is the actual learning part
         self.left = left
         self.right = right
-        self.info_gain = info_gain #measured by entropy reduction i.e. how much the split reduced entropy is how much information has been gained
+        self.efficiency_metric = efficiency_metric #measured by entropy reduction i.e. how much the split reduced entropy is how much information has been gained
 
         #self.value is used if node is leaf node
         self.value = value
 
 
 
-class Decision_Tree_Classifier():
+class Decision_Tree():
 
-    def __init__(self, min_samples=2, max_depth=2):
+    def __init__(self, min_samples=2, max_depth=2, mode="classify", thresh_quantile_opt=False):
 
         self.root = None
 
@@ -29,8 +29,28 @@ class Decision_Tree_Classifier():
         #too big of a max_depth can cause overfitting
         self.max_depth = max_depth
 
+        if mode == "classify" or mode == "regression":
+            self.mode = mode
+        else:
+            raise Exception("Invalid mode! Model supports classification or regression functionality only!")
+        
+        self.thresh_quantile_opt = thresh_quantile_opt
+
+    @property
+    def get_mode(self):
+
+        if self.mode:
+            return self.mode
 
     def build_tree(self, dataset:pd.DataFrame, curr_depth=0):
+        
+        if self.mode=="classify":
+            return self.build_classifier_tree(dataset, curr_depth)
+        elif self.mode=="regression":
+            return self.build_regression_tree(dataset, curr_depth)
+
+
+    def build_classifier_tree(self, dataset:pd.DataFrame, curr_depth=0):
 
         #note dataset is a a pandas dataframe
 
@@ -41,23 +61,61 @@ class Decision_Tree_Classifier():
         if num_samples >= self.min_samples and curr_depth<= self.max_depth:
 
             #generate best split
-            best_split = self.gen_best_split(dataset, num_samples, num_features)
+            best_split = self.gen_best_split(dataset, num_samples, num_features, criteria="information gain")
 
             '''
             if information gain value is less then 0 
             there is no information gain because the data is pure 
             i.e it's of the same class so no more need for splitting
             '''
-            if best_split["info_gain"] > 0: 
+            if best_split["efficiency_metric"] is not None and best_split["efficiency_metric"] > 0: 
                 
                 #recursion for left child node
-                left_child = self.build_tree(best_split["left_child_dataset"], curr_depth+1)
+                left_child = self.build_classifier_tree(best_split["left_child_dataset"], curr_depth+1)
                 #recursion for right child node
-                right_child = self.build_tree(best_split["right_child_dataset"], curr_depth+1)
+                right_child = self.build_classifier_tree(best_split["right_child_dataset"], curr_depth+1)
 
                 #return node in case node is decision node
                 return Node(best_split["feature_index"], best_split["threshold"], 
-                            left_child, right_child, best_split["info_gain"])
+                            left_child, right_child, best_split["efficiency_metric"])
+            elif curr_depth<=1:
+                print(f"{curr_depth} reached for decision splits")
+
+        leaf_value = self.calculate_leaf_value(targets)
+
+        #return node in case node is leaf node
+        return Node(value=leaf_value)
+    
+    def build_regression_tree(self, dataset:pd.DataFrame, curr_depth=0):
+
+        #note dataset is a a pandas dataframe
+
+        features = dataset[:, :-1]
+        targets = dataset[:,-1]
+        num_samples, num_features = np.shape(features)
+
+        if num_samples >= self.min_samples and curr_depth<= self.max_depth:
+
+            #generate best split
+            best_split = self.gen_best_split(dataset, num_samples, num_features, criteria="variance reduction")
+
+            '''
+            if information gain value is less then 0 
+            there is no information gain because the data is pure 
+            i.e it's of the same class so no more need for splitting
+            '''
+            if best_split["efficiency_metric"] is not None and best_split["efficiency_metric"] > 0: 
+                
+                #recursion for left child node
+                left_child = self.build_regression_tree(best_split["left_child_dataset"], curr_depth+1)
+                #recursion for right child node
+                right_child = self.build_regression_tree(best_split["right_child_dataset"], curr_depth+1)
+
+                #return node in case node is decision node
+                return Node(best_split["feature_index"], best_split["threshold"], 
+                            left_child, right_child, best_split["efficiency_metric"])
+            elif curr_depth<=1:
+                print(f"{curr_depth} reached for decision splits")
 
         leaf_value = self.calculate_leaf_value(targets)
 
@@ -66,15 +124,26 @@ class Decision_Tree_Classifier():
 
     def calculate_leaf_value(self, leaf_dataset):
         
-        #this calculates the leaf value
-        leaf_dataset = list(leaf_dataset)
-        return max(leaf_dataset, key=leaf_dataset.count)
+        if self.mode == "classify":
+            #this calculates the leaf value in case of target values of categorical importance
+            leaf_dataset = list(leaf_dataset)
+            return max(leaf_dataset, key=leaf_dataset.count)
+        elif self.mode == "regression":
+            return self.sample_mean(leaf_dataset)
 
-    def gen_best_split(self, dataset, num_samples, num_features):
+    def gen_best_split(self, dataset, num_samples, num_features, criteria="information gain"):
         
-        best_split = {}
+        
+
+        best_split = {
+            "feature_index": None,
+            "threshold": None,
+            "left_child_dataset": None,
+            "right_child_dataset": None,
+            "efficiency_metric": None
+        }
         #max_info_gain is first initialized at -infinity
-        max_info_gain = -float("inf")
+        max_metric_val = -float("inf")
         
         '''
         Check all possible thresholds and feature combinations 
@@ -87,10 +156,18 @@ class Decision_Tree_Classifier():
             #possible thresholds can have values only from the feature set at the current feature index
             possible_thresholds  = np.unique(feature_values)
 
+            if self.thresh_quantile_opt:
+                possible_thresholds = np.quantile(possible_thresholds, np.linspace(0, 1, 20))
+
+            
+
             for threshold in possible_thresholds:
 
                 #split according to threshold
                 left_child_dataset, right_child_dataset = self.split(dataset, feature_index, threshold)
+
+                if left_child_dataset is None or right_child_dataset is None:
+                    continue
 
                 if len(left_child_dataset) > 0 and len(right_child_dataset) > 0:
 
@@ -99,20 +176,23 @@ class Decision_Tree_Classifier():
                     left_child_outcome_target = left_child_dataset[:, -1]
                     right_child_outcome_target = right_child_dataset[:, -1]
 
-                    curr_split_info_gain = self.info_gain(parent_outcome_target, left_child_outcome_target, right_child_outcome_target, "entropy")
+                    if criteria=="information gain":
+                        split_efficiency_metric = self.info_gain(parent_outcome_target, left_child_outcome_target, right_child_outcome_target, "entropy")
+                    elif criteria=="variance reduction":
+                        split_efficiency_metric = self.variance_reduction(parent_outcome_target, left_child_outcome_target, right_child_outcome_target)
 
-                    #compare split information gain
-                    if curr_split_info_gain > max_info_gain:
+                    #compare split metric
+                    if split_efficiency_metric > max_metric_val:
 
                         #save best slit information
                         best_split["feature_index"] = feature_index
                         best_split["threshold"] = threshold
                         best_split["left_child_dataset"] = left_child_dataset
                         best_split["right_child_dataset"] = right_child_dataset
-                        best_split["info_gain"] = curr_split_info_gain
+                        best_split["efficiency_metric"] = split_efficiency_metric
 
-                        max_info_gain = curr_split_info_gain
-
+                        max_metric_val = split_efficiency_metric
+                    
 
         return best_split
 
@@ -121,6 +201,9 @@ class Decision_Tree_Classifier():
 
         sub_threshold_dataset = np.array([row for row in dataset if row[feature_index] <= threshold])
         supra_threshold_dataset = np.array([row for row in dataset if row[feature_index] > threshold])
+
+        if len(sub_threshold_dataset) == 0 or len(supra_threshold_dataset) == 0:
+            return None, None  # Return None to indicate no split was made
 
         return sub_threshold_dataset, supra_threshold_dataset
 
@@ -138,6 +221,15 @@ class Decision_Tree_Classifier():
         
         return information_gain
 
+    def variance_reduction(self, parent_dataset_outcomes, left_child_dataset_outcomes, right_child_dataset_outcomes):
+
+        weight_left = len(left_child_dataset_outcomes) / len(parent_dataset_outcomes)
+        weight_right = len(right_child_dataset_outcomes) / len(parent_dataset_outcomes)
+
+        variance_reduction = self.variance(parent_dataset_outcomes) - (weight_left*self.variance(left_child_dataset_outcomes) + weight_right*self.variance(right_child_dataset_outcomes))
+
+        return variance_reduction
+    
 
     #compute entropy
     '''
@@ -176,6 +268,28 @@ class Decision_Tree_Classifier():
         
         return 1 - gini
 
+    def variance(self, dataset_outcomes):
+
+        dataset_outcomes = np.array(dataset_outcomes)
+
+        if len(dataset_outcomes) == 0:
+            return 0
+        
+        outcome_mean = self.sample_mean(dataset_outcomes)
+        variance = sum((dataset_outcomes - outcome_mean)**2) / len(dataset_outcomes)
+        
+        return variance
+
+
+    def sample_mean(self, sample_values)->float:
+
+        sample_values = np.array(sample_values)
+
+        if len(sample_values) > 0:
+            return sum(sample_values) / len(sample_values)
+        
+        return 0
+
     #trains the model
     def fit(self, X, Y):
 
@@ -212,7 +326,30 @@ class Decision_Tree_Classifier():
         if tree.value is not None:
             print(f"{indent}Leaf: {tree.value}")
         else:
-            print(f"{indent}Node at depth {depth}: if x{tree.feature_index} <= {tree.threshold}:")
+            print(f"{indent}Node at depth {depth}: if x{tree.feature_index} <= {tree.threshold}:     (Metric = {tree.efficiency_metric})")
             self.print_tree(tree.left, depth+1)
-            print(f"{indent}Node at depth {depth}: else if x{tree.feature_index} > {tree.threshold}:")
+            print(f"{indent}Node at depth {depth}: else if x{tree.feature_index} > {tree.threshold}:     (Metric = {tree.efficiency_metric})")
             self.print_tree(tree.right, depth+1)
+
+
+
+if __name__ == "__main__":
+
+    col_names = ['variance', 'skewness', 'curtosis', 'entropy', 'type']
+    banknote_dataset = pd.read_csv("D:\dev\Pred_&_ML_tutorial_model_building\src\\resources\data_banknote_authentication\data_banknote_authentication.txt",
+                               skiprows=1, delimiter=",", header=None, names=col_names)
+
+    banknote_dataset = banknote_dataset.sample(frac=1).reset_index(drop=True)
+
+    from sklearn.model_selection import train_test_split
+
+    features = banknote_dataset.iloc[:, :-1].values
+    targets = banknote_dataset.iloc[:, -1].values.reshape(-1,1)
+
+    TRAIN_DATASET_FEATURES, TEST_DATASET_FEATURES, TRAIN_DATASET_OUTCOMES, TEST_DATASET_OUTCOMES = train_test_split(features, targets, test_size=.2,random_state=42)
+
+    
+    classifier = Decision_Tree(min_samples=3, max_depth=5, mode="classify")
+
+    classifier.fit(TRAIN_DATASET_FEATURES, TRAIN_DATASET_OUTCOMES)
+    classifier.print_tree()
