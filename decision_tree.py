@@ -78,8 +78,6 @@ class Decision_Tree():
                 #return node in case node is decision node
                 return Node(best_split["feature_index"], best_split["threshold"], 
                             left_child, right_child, best_split["efficiency_metric"])
-            elif curr_depth<=1:
-                print(f"{curr_depth} reached for decision splits")
 
         leaf_value = self.calculate_leaf_value(targets)
 
@@ -114,8 +112,6 @@ class Decision_Tree():
                 #return node in case node is decision node
                 return Node(best_split["feature_index"], best_split["threshold"], 
                             left_child, right_child, best_split["efficiency_metric"])
-            elif curr_depth<=1:
-                print(f"{curr_depth} reached for decision splits")
 
         leaf_value = self.calculate_leaf_value(targets)
 
