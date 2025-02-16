@@ -95,7 +95,7 @@ class Random_Forest():
 
         np.random.seed(self.random_state)
 
-        train_f, val_f, train_o, val_o = train_test_split(features, outcomes, test_size=.2 ,random_state=42)
+        train_f, val_f, train_o, val_o = train_test_split(features, outcomes, test_size=.1 ,random_state=42)
 
         n_samples, n_features = train_f.shape
         self.trees_with_weights = []
